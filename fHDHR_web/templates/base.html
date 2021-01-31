@@ -1,87 +1,74 @@
 <html>
+
   <head>
     <title>{{ fhdhr.config.dict["fhdhr"]["friendlyname"] }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-      table, th, td {border: 1px solid black;}
-    </style>
     <link href="style.css" rel="stylesheet">
+
+    <script type="text/javascript" src="/brython.js"></script>
+    <script type="text/javascript" src="/brython_stdlib.js"></script>
+    <script type="text/python" src="brython.bry"></script>
+
   </head>
-    <body>
-      <h1 style="text-align: center;">
-        <span style="text-decoration: underline;"><strong><em>{{ fhdhr.config.dict["fhdhr"]["friendlyname"] }}</em></strong>
-        </span>
-        <img class="pull-left" src="/favicon.ico" alt="fHDHR Logo" width="100" height="100">
-      </h1>
-      <br><br>
+
+  <body onload="brython({debug: 1, indexedDB: false})">
+
+    <h1 class="center" style="text-align:center">
+      <span style="text-decoration: underline;"><strong><em>{{ fhdhr.config.dict["fhdhr"]["friendlyname"] }}</em></strong>
+      </span>
+      <img class="pull-left" src="/favicon.ico" alt="fHDHR Logo" width="100" height="100">
+    </h1>
+    {% set retmessage = request.args.get('retmessage', default=None) %}
+    {% if retmessage %}
       <p></p>
-      <div>
+      <p class="pull-left" style="font-size:1em">{{ retmessage }}</p>
+    {% endif %}
+    <br><br>
+    <p></p>
 
-      <button class="pull-left" onclick="OpenLink('/index')">fHDHR</a></button>
+    <div>
+      <button onclick="location.href='/index'" type="button">fHDHR</button>
 
-      <button class="pull-left" onclick="OpenLink('/origin')">{{ fhdhr.config.dict["main"]["servicename"] }}</a></button>
-
-      <button class="pull-left" onclick="OpenLink('/channels')">Channels</a></button>
-
-      <button class="pull-left" onclick="OpenLink('/guide')">Guide</a></button>
-
-      <button class="pull-left" onclick="OpenLink('/cluster')">Cluster/SSDP</a></button>
-
-      <button class="pull-left" onclick="OpenLink('/tuners')">Tuners</a></button>
-
-      <button class="pull-left" onclick="OpenLink('/xmltv')">xmltv</a></button>
-
-      {% if fhdhr.config.dict["web_ui"]["advanced"] %}
-        <button class="pull-left" onclick="OpenLink('/version')">Version</a></button>
-      {% endif %}
-
-      {% if fhdhr.config.dict["web_ui"]["advanced"] %}
-        <button class="pull-left" onclick="OpenLink('/diagnostics')">Diagnostics</a></button>
-      {% endif %}
-
-      <button class="pull-left" onclick="OpenLink('/settings')">Settings</a></button>
+      {% for page_dict in session["route_list"]["pages"] %}
+        {% if session["route_list"]["pages"][page_dict]["name"] != "page_index_html" and fhdhr.config.dict["web_ui"]["access_level"] >= session["route_list"]["pages"][page_dict]["endpoint_access_level"] %}
+          <button onclick="location.href='{{ session["route_list"]["pages"][page_dict]["endpoints"][0] }}'" type="button">{{ session["route_list"]["pages"][page_dict]["pretty_name"] }}</button>
+        {% endif %}
+      {% endfor %}
 
       <a class="pull-right" style="padding: 5px;" href="/api/xmltv?method=get&source={{ fhdhr.device.epg.def_method }}">xmltv</a>
       <a class="pull-right" style="padding: 5px;" href="/api/m3u?method=get&channel=all">m3u</a>
+      <a class="pull-right" style="padding: 5px;" href="/api/w3u?method=get&channel=all">w3u</a>
+
       <form  class="pull-right" style="padding: 5px;"  method="post" action="/api/settings?method=update&redirect={{ request.path }}">
         <input type="hidden" name="config_section" value="web_ui">
-        <input type="hidden" name="config_name" value="advanced">
-        {% if fhdhr.config.dict["web_ui"]["advanced"] %}
-          <input type="hidden" name="config_value" value=False>
+        <input type="hidden" name="config_name" value="access_level">
+
+        {% if fhdhr.config.dict["web_ui"]["access_level"] == 2 %}
+          <input type="hidden" name="config_value" value=0>
+        {% elif fhdhr.config.dict["web_ui"]["access_level"] == 1 %}
+          <input type="hidden" name="config_value" value=2>
         {% else %}
-          <input type="hidden" name="config_value" value=True>
+          <input type="hidden" name="config_value" value=1>
         {% endif %}
-        <input type="hidden" name="config_default" value=False>
-        {% if fhdhr.config.dict["web_ui"]["advanced"] %}
-          <a data-th="Reset"><input type="submit" value="Basic"></a>
+
+        <input type="hidden" name="config_default" value=0>
+        {% if fhdhr.config.dict["web_ui"]["access_level"] == 2 %}
+          <a><input type="submit" value="Extra Advanced"></a>
+        {% elif fhdhr.config.dict["web_ui"]["access_level"] == 1 %}
+          <a><input type="submit" value="Advanced"></a>
         {% else %}
-          <a data-th="Reset"><input type="submit" value="Advanced"></a>
+          <a><input type="submit" value="Basic"></a>
         {% endif %}
       </form>
-
-      </div>
       <hr align="center" width="100%">
+    </div>
 
-      {% if fhdhr.config.dict["web_ui"]["cluster_bar"] %}
-        {% set locations = fhdhr.device.cluster.get_cluster_dicts_web() %}
-        {% if locations %}
-          <div>
-          {% for location in locations %}
-              <button class="pull-left" onclick="OpenLink('{{ location["base_url"] }}')">{{ location["name"] }}</a></button>
-          {% endfor %}
-          </div>
-          <hr align="center" width="100%">
-        {% endif %}
+    {% for page_dict in session["route_list"]["tool_pages"] %}
+      {% if session["route_list"]["tool_pages"][page_dict]["name"] != "page_index_html" and fhdhr.config.dict["web_ui"]["access_level"] >= session["route_list"]["tool_pages"][page_dict]["endpoint_access_level"] %}
+        <button onclick="location.href='{{ session["route_list"]["tool_pages"][page_dict]["endpoints"][0] }}'" type="button">{{ session["route_list"]["tool_pages"][page_dict]["pretty_name"] }}</button>
       {% endif %}
+    {% endfor %}
 
-      {% set retmessage = request.args.get('retmessage', default=None) %}
-      {% if retmessage %}
-        <p>{{ retmessage }}</p>
-      {% endif %}
-
-      {% block content %}{% endblock %}
-    </body>
+    {% block content %}{% endblock %}
+  </body>
 </html>
-<script>
-  function OpenLink(NewURL) {window.open(NewURL, "_self");}
-</script>

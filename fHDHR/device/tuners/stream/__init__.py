@@ -2,8 +2,6 @@
 
 from .direct_stream import Direct_Stream
 from .direct_m3u8_stream import Direct_M3U8_Stream
-from .ffmpeg_stream import FFMPEG_Stream
-from .vlc_stream import VLC_Stream
 
 
 class Stream():
@@ -12,16 +10,14 @@ class Stream():
         self.fhdhr = fhdhr
         self.stream_args = stream_args
 
-        if stream_args["method"] == "ffmpeg":
-            self.method = FFMPEG_Stream(fhdhr, stream_args, tuner)
-        if stream_args["method"] == "vlc":
-            self.method = VLC_Stream(fhdhr, stream_args, tuner)
-        elif (stream_args["method"] == "direct" and
-              not self.stream_args["true_content_type"].startswith(tuple(["application/", "text/"]))):
-            self.method = Direct_Stream(fhdhr, stream_args, tuner)
-        elif (stream_args["method"] == "direct" and
-              self.stream_args["true_content_type"].startswith(tuple(["application/", "text/"]))):
-            self.method = Direct_M3U8_Stream(fhdhr, stream_args, tuner)
+        if stream_args["method"] == "direct":
+            if self.stream_args["true_content_type"].startswith(tuple(["application/", "text/"])):
+                self.method = Direct_M3U8_Stream(fhdhr, stream_args, tuner)
+            else:
+                self.method = Direct_Stream(fhdhr, stream_args, tuner)
+        else:
+            plugin_name = self.fhdhr.config.dict["streaming"]["valid_methods"][stream_args["method"]]["plugin"]
+            self.method = self.fhdhr.plugins.plugins[plugin_name].Plugin_OBJ(fhdhr, self.fhdhr.plugins.plugins[plugin_name].plugin_utils, stream_args, tuner)
 
     def get(self):
         return self.method.get()

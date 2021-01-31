@@ -8,6 +8,19 @@ UNARY_OPS = (ast.UAdd, ast.USub)
 BINARY_OPS = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod)
 
 
+def channel_sort(channel_list):
+    """Take a list of channel number strings and sort the Numbers and SubNumbers"""
+    chan_dict_list_split = {}
+    for number in channel_list:
+        try:
+            subnumber = number.split(".")[1]
+        except IndexError:
+            subnumber = None
+        prinumber = number.split(".")[0]
+        chan_dict_list_split[number] = {"number": prinumber, "subnumber": subnumber}
+    return sorted(chan_dict_list_split, key=lambda i: (int(chan_dict_list_split[i]['number']), int(chan_dict_list_split[i]['subnumber'] or 0)))
+
+
 def is_docker():
     path = "/proc/self/cgroup"
     if not os.path.isfile(path):
@@ -120,9 +133,9 @@ def humanized_time(countdownseconds):
             if currenttimevar > 1:
                 timetype = str(x+"s")
             if displaymsg:
-                displaymsg = str(displaymsg + " " + str(int(currenttimevar)) + " " + timetype)
+                displaymsg = "%s %s %s" % (displaymsg, int(currenttimevar), timetype)
             else:
-                displaymsg = str(str(int(currenttimevar)) + " " + timetype)
+                displaymsg = "%s %s" % (int(currenttimevar), timetype)
     if not displaymsg:
         return "just now"
     return displaymsg
@@ -138,4 +151,4 @@ class WebReq():
     def __getattr__(self, name):
         ''' will only get called for undefined attributes '''
         if hasattr(self.session, name):
-            return eval("self.session." + name)
+            return eval("self.session.%s" % name)

@@ -5,14 +5,8 @@
                       "config_file": true,
                       "config_web": true
                   },
-            "advanced":{
-                      "value": false,
-                      "config_file": true,
-                      "config_web": true
-                  }
-                  ,
-            "cluster_bar":{
-                      "value": true,
+            "access_level":{
+                      "value": 0,
                       "config_file": true,
                       "config_web": true
                   }

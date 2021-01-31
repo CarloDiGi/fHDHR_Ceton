@@ -1,37 +1,20 @@
 from flask import request, render_template, session
 import datetime
 
-from fHDHR.tools import humanized_time
+from fHDHR.tools import humanized_time, channel_sort
 
 
 class Guide_HTML():
     endpoints = ["/guide", "/guide.html"]
     endpoint_name = "page_guide_html"
+    endpoint_access_level = 0
+    pretty_name = "Guide"
 
     def __init__(self, fhdhr):
         self.fhdhr = fhdhr
 
     def __call__(self, *args):
         return self.get(*args)
-
-    def number_sort(self, chan_dict):
-        for channel in list(chan_dict.keys()):
-            number = chan_dict[channel]["number"]
-            chan_dict[channel]["number"] = number.split(".")[0]
-            try:
-                chan_dict[channel]["subnumber"] = number.split(".")[1]
-            except IndexError:
-                chan_dict[channel]["subnumber"] = None
-        sorted_chan_list = sorted(list(chan_dict.keys()), key=lambda i: (int(chan_dict[i]['number']), int(chan_dict[i]['subnumber'] or 0)))
-        sorted_chan_dict = {}
-        for cnum in sorted_chan_list:
-            if cnum not in list(sorted_chan_dict.keys()):
-                sorted_chan_dict[cnum] = chan_dict[cnum].copy()
-                if sorted_chan_dict[cnum]["subnumber"]:
-                    sorted_chan_dict[cnum]["number"] = "%s.%s" % (sorted_chan_dict[cnum]["number"], sorted_chan_dict[cnum]["subnumber"])
-                del sorted_chan_dict[cnum]["subnumber"]
-        chan_dict = sorted_chan_dict.copy()
-        return chan_dict
 
     def get(self, *args):
 
@@ -44,10 +27,16 @@ class Guide_HTML():
         if source not in epg_methods:
             source = self.fhdhr.device.epg.def_method
 
+        if not source:
+            return render_template('guide.html', request=request, session=session, fhdhr=self.fhdhr, chan_guide_list=chan_guide_list, epg_methods=epg_methods, source=source, list=list)
+
         whatson = self.fhdhr.device.epg.whats_on_allchans(source)
 
         # Sort the channels
-        sorted_chan_guide = self.number_sort(whatson)
+        sorted_channel_list = channel_sort(list(whatson.keys()))
+        sorted_chan_guide = {}
+        for channel in sorted_channel_list:
+            sorted_chan_guide[channel] = whatson[channel]
 
         for channel in list(sorted_chan_guide.keys()):
             if sorted_chan_guide[channel]["listing"][0]["time_end"]:
@@ -74,14 +63,14 @@ class Guide_HTML():
                 else:
                     chan_dict["listing_%s" % time_item] = str(datetime.datetime.fromtimestamp(sorted_chan_guide[channel]["listing"][0][time_item]))
 
-            if source in ["blocks", "origin", self.fhdhr.config.dict["main"]["dictpopname"]]:
-                chan_obj = self.fhdhr.device.channels.get_channel_obj("origin_id", sorted_chan_guide[channel]["id"])
+            if source in self.fhdhr.origins.valid_origins:
+                chan_obj = self.fhdhr.device.channels.get_channel_obj("origin_id", sorted_chan_guide[channel]["id"], source)
 
                 chan_dict["name"] = chan_obj.dict["name"]
                 chan_dict["number"] = chan_obj.number
                 chan_dict["chan_thumbnail"] = chan_obj.thumbnail
                 chan_dict["enabled"] = chan_obj.dict["enabled"]
-                chan_dict["play_url"] = chan_obj.play_url
+                chan_dict["m3u_url"] = chan_obj.api_m3u_url
 
                 chan_dict["listing_thumbnail"] = chan_dict["listing_thumbnail"] or chan_obj.thumbnail
             else:
@@ -92,4 +81,4 @@ class Guide_HTML():
 
             chan_guide_list.append(chan_dict)
 
-        return render_template('guide.html', session=session, request=request, fhdhr=self.fhdhr, chan_guide_list=chan_guide_list, epg_methods=epg_methods, source=source)
+        return render_template('guide.html', request=request, session=session, fhdhr=self.fhdhr, chan_guide_list=chan_guide_list, epg_methods=epg_methods, source=source, list=list)

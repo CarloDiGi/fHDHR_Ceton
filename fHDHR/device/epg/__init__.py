@@ -1,29 +1,27 @@
-import os
 import time
 import datetime
+import threading
+
+from fHDHR.tools import channel_sort
 
 from .blocks import blocksEPG
 
 
 class EPG():
 
-    def __init__(self, fhdhr, channels, originwrapper, alternative_epg):
+    def __init__(self, fhdhr, channels, origins):
         self.fhdhr = fhdhr
 
-        self.origin = originwrapper
+        self.origins = origins
         self.channels = channels
-        self.alternative_epg = alternative_epg
 
         self.epgdict = {}
 
-        self.epg_methods = self.fhdhr.config.dict["epg"]["method"]
-        self.valid_epg_methods = [x for x in self.fhdhr.config.dict["epg"]["valid_epg_methods"] if x and x not in [None, "None"]]
+        self.epg_methods = self.fhdhr.config.dict["epg"]["method"] or []
+        self.valid_epg_methods = [x for x in list(self.fhdhr.config.dict["epg"]["valid_methods"].keys()) if x and x not in [None, "None"]]
 
-        self.blocks = blocksEPG(self.fhdhr, self.channels)
-        self.epg_handling = {
-                            "origin": self.origin,
-                            "blocks": self.blocks,
-                            }
+        self.blocks = blocksEPG(self.fhdhr, self.channels, self.origins, None)
+        self.epg_handling = {}
         self.epg_method_selfadd()
 
         self.def_method = self.fhdhr.config.dict["epg"]["def_method"]
@@ -35,21 +33,21 @@ class EPG():
             if epg_method not in list(self.sleeptime.keys()):
                 self.sleeptime[epg_method] = self.fhdhr.config.dict["epg"]["update_frequency"]
 
-        self.epg_update_url = "%s/api/epg?method=update" % (self.fhdhr.api.base)
+        self.epg_update_url = "/api/epg?method=update"
+
+        self.fhdhr.threads["epg"] = threading.Thread(target=self.run)
 
     def clear_epg_cache(self, method=None):
 
         if not method:
+            if not self.def_method:
+                return
+        if method not in self.valid_epg_methods:
+            if not self.def_method:
+                return
             method = self.def_method
-        if (method == self.fhdhr.config.dict["main"]["dictpopname"] or
-           method not in self.fhdhr.config.dict["epg"]["valid_epg_methods"]):
-            method = "origin"
 
-        epgtypename = method
-        if method in [self.fhdhr.config.dict["main"]["dictpopname"], "origin"]:
-            epgtypename = self.fhdhr.config.dict["main"]["dictpopname"]
-
-        self.fhdhr.logger.info("Clearing " + epgtypename + " EPG cache.")
+        self.fhdhr.logger.info("Clearing %s EPG cache." % method)
 
         if hasattr(self.epg_handling[method], 'clear_cache'):
             self.epg_handling[method].clear_cache()
@@ -62,11 +60,17 @@ class EPG():
     def whats_on_now(self, channel_number, method=None, chan_obj=None, chan_dict=None):
         nowtime = time.time()
         epgdict = self.get_epg(method)
-        try:
-            listings = epgdict[channel_number]["listing"]
-        except KeyError:
-            listings = []
-        for listing in listings:
+        if channel_number not in list(epgdict.keys()):
+            epgdict[channel_number] = {
+                                        "callsign": "",
+                                        "name": "",
+                                        "number": str(channel_number),
+                                        "id": "",
+                                        "thumbnail": "",
+                                        "listing": []
+                                        }
+
+        for listing in epgdict[channel_number]["listing"]:
             for time_item in ["time_start", "time_end"]:
                 time_value = listing[time_item]
                 if str(time_value).endswith("+00:00"):
@@ -86,16 +90,19 @@ class EPG():
     def whats_on_allchans(self, method=None):
 
         if not method:
+            if not self.def_method:
+                return
             method = self.def_method
-        if (method == self.fhdhr.config.dict["main"]["dictpopname"] or
-           method not in self.fhdhr.config.dict["epg"]["valid_epg_methods"]):
-            method = "origin"
+        if method not in self.valid_epg_methods:
+            if not self.def_method:
+                return
+            method = self.def_method
 
         channel_guide_dict = {}
         epgdict = self.get_epg(method)
         epgdict = epgdict.copy()
         for c in list(epgdict.keys()):
-            if method in ["blocks", "origin", self.fhdhr.config.dict["main"]["dictpopname"]]:
+            if method in [origin for origin in list(self.origins.origins_dict.keys())]:
                 chan_obj = self.channels.get_channel_obj("origin_id", epgdict[c]["id"])
                 channel_number = chan_obj.number
                 epgdict[channel_number] = epgdict.pop(c)
@@ -115,22 +122,20 @@ class EPG():
     def get_epg(self, method=None):
 
         if not method:
+            if not self.def_method:
+                return
             method = self.def_method
-        if (method == self.fhdhr.config.dict["main"]["dictpopname"] or
-           method not in self.fhdhr.config.dict["epg"]["valid_epg_methods"]):
-            method = "origin"
+        if method not in self.valid_epg_methods:
+            if not self.def_method:
+                return
+            method = self.def_method
 
-        if method not in list(self.epgdict.keys()):
+        if method in list(self.epgdict.keys()):
+            return self.epgdict[method]
 
-            epgdict = self.fhdhr.db.get_fhdhr_value("epg_dict", method) or None
-            if not epgdict:
-                self.update(method)
-                self.epgdict[method] = self.fhdhr.db.get_fhdhr_value("epg_dict", method) or {}
-            else:
-                self.epgdict[method] = epgdict
-            return self.epgdict[method]
-        else:
-            return self.epgdict[method]
+        self.update(method)
+        self.epgdict[method] = self.fhdhr.db.get_fhdhr_value("epg_dict", method) or {}
+        return self.epgdict[method]
 
     def get_thumbnail(self, itemtype, itemid):
         if itemtype == "channel":
@@ -154,45 +159,29 @@ class EPG():
         return next(item for item in event_list if item["id"] == event_id) or None
 
     def epg_method_selfadd(self):
-        self.fhdhr.logger.info("Checking for Alternative EPG methods.")
-        new_epgtype_list = []
-        for entry in os.scandir(self.fhdhr.config.internal["paths"]["alternative_epg"]):
-            if entry.is_file():
-                if entry.name[0] != '_' and entry.name.endswith(".py"):
-                    new_epgtype_list.append(str(entry.name[:-3]))
-            elif entry.is_dir():
-                if entry.name[0] != '_':
-                    new_epgtype_list.append(str(entry.name))
-        for method in new_epgtype_list:
-            self.fhdhr.logger.info("Found %s EPG method." % method)
-            self.epg_handling[method] = eval("self.alternative_epg.%s.%sEPG(self.fhdhr, self.channels)" % (method, method))
+        for plugin_name in list(self.fhdhr.plugins.plugins.keys()):
+            if self.fhdhr.plugins.plugins[plugin_name].type == "alt_epg":
+                method = self.fhdhr.plugins.plugins[plugin_name].name.lower()
+                self.epg_handling[method] = self.fhdhr.plugins.plugins[plugin_name].Plugin_OBJ(self.channels, self.fhdhr.plugins.plugins[plugin_name].plugin_utils)
+        for origin in list(self.origins.origins_dict.keys()):
+            if origin.lower() not in list(self.epg_handling.keys()):
+                self.epg_handling[origin.lower()] = blocksEPG(self.fhdhr, self.channels, self.origins, origin)
+                self.fhdhr.config.register_valid_epg_method(origin, "Blocks")
+                self.valid_epg_methods.append(origin.lower())
 
     def update(self, method=None):
 
-        if (not method or
-           method not in self.fhdhr.config.dict["epg"]["valid_epg_methods"]):
+        if not method:
+            if not self.def_method:
+                return
+            method = self.def_method
+        if method not in self.valid_epg_methods:
+            if not self.def_method:
+                return
             method = self.def_method
 
-        if method == self.fhdhr.config.dict["main"]["dictpopname"]:
-            method = "origin"
-
-        epgtypename = method
-        if method in [self.fhdhr.config.dict["main"]["dictpopname"], "origin"]:
-            epgtypename = self.fhdhr.config.dict["main"]["dictpopname"]
-
-        self.fhdhr.logger.info("Updating " + epgtypename + " EPG cache.")
-        if method == 'origin':
-            programguide = self.epg_handling['origin'].update_epg(self.channels)
-        else:
-            programguide = self.epg_handling[method].update_epg()
-
-        # Sort the channels
-        clean_prog_guide = {}
-        sorted_chan_list = sorted(list(programguide.keys()))
-        for cnum in sorted_chan_list:
-            if cnum not in list(clean_prog_guide.keys()):
-                clean_prog_guide[cnum] = programguide[cnum].copy()
-        programguide = clean_prog_guide.copy()
+        self.fhdhr.logger.info("Updating %s EPG cache." % method)
+        programguide = self.epg_handling[method].update_epg()
 
         # sort the channel listings by time stamp
         for cnum in list(programguide.keys()):
@@ -208,7 +197,7 @@ class EPG():
                 clean_prog_guide[cnum] = programguide[cnum].copy()
                 clean_prog_guide[cnum]["listing"] = []
 
-            if method in ["blocks", "origin", self.fhdhr.config.dict["main"]["dictpopname"]]:
+            if method in [origin for origin in list(self.origins.origins_dict.keys())]:
                 chan_obj = self.channels.get_channel_obj("origin_id", programguide[cnum]["id"])
             else:
                 chan_obj = None
@@ -269,10 +258,10 @@ class EPG():
         programguide = clean_prog_guide.copy()
 
         # if a stock method, generate Blocks EPG for missing channels
-        if method in ["blocks", "origin", self.fhdhr.config.dict["main"]["dictpopname"]]:
+        if method in [origin for origin in list(self.origins.origins_dict.keys())]:
             timestamps = self.blocks.timestamps
-            for fhdhr_id in list(self.channels.list.keys()):
-                chan_obj = self.channels.list[fhdhr_id]
+            for fhdhr_id in [x["id"] for x in self.channels.get_channels(method)]:
+                chan_obj = self.channels.get_channel_obj("id", fhdhr_id, method)
                 if str(chan_obj.number) not in list(programguide.keys()):
                     programguide[str(chan_obj.number)] = chan_obj.epgdict
                     clean_prog_dicts = self.blocks.empty_channel_epg(timestamps, chan_obj=chan_obj)
@@ -289,29 +278,41 @@ class EPG():
                     programguide[cnum]["listing"][prog_index]["thumbnail"] = programguide[cnum]["thumbnail"]
                 prog_index += 1
 
-        self.epgdict = programguide
+        # Get Totals
+        total_channels = len(list(programguide.keys()))
+        total_programs = 0
+
+        # Sort the channels
+        sorted_channel_list = channel_sort(list(programguide.keys()))
+        sorted_chan_guide = {}
+        for channel in sorted_channel_list:
+            total_programs += len(programguide[cnum]["listing"])
+            sorted_chan_guide[channel] = programguide[channel]
+
+        self.epgdict[method] = sorted_chan_guide
         self.fhdhr.db.set_fhdhr_value("epg_dict", method, programguide)
         self.fhdhr.db.set_fhdhr_value("update_time", method, time.time())
-        self.fhdhr.logger.info("Wrote " + epgtypename + " EPG cache.")
+        self.fhdhr.logger.info("Wrote %s EPG cache. %s Programs for %s Channels" % (method, total_programs, total_channels))
+
+    def start(self):
+        self.fhdhr.logger.info("EPG Update Thread Starting")
+        self.fhdhr.threads["epg"].start()
+
+    def stop(self):
+        self.fhdhr.logger.info("EPG Update Thread Stopping")
 
     def run(self):
         time.sleep(1800)
-        try:
-            while True:
-                for epg_method in self.epg_methods:
-                    last_update_time = self.fhdhr.db.get_fhdhr_value("update_time", epg_method)
-                    updatetheepg = False
-                    if not last_update_time:
-                        updatetheepg = True
-                    elif time.time() >= (last_update_time + self.sleeptime[epg_method]):
-                        updatetheepg = True
-                    if updatetheepg:
-                        try:
-                            self.fhdhr.web.session.get("%s?sorurce=%s" % (self.epg_update_url, epg_method), timeout=0.0000000001)
-                        except self.fhdhr.web.exceptions.ReadTimeout:
-                            pass
-                        except self.fhdhr.web.exceptions.ConnectionError as e:
-                            self.fhdhr.logger.error("Error updating %s EPG cache: %s" % (epg_method, e))
-                time.sleep(1800)
-        except KeyboardInterrupt:
-            pass
+        while True:
+            for epg_method in self.epg_methods:
+                last_update_time = self.fhdhr.db.get_fhdhr_value("update_time", epg_method)
+                updatetheepg = False
+                if not last_update_time:
+                    updatetheepg = True
+                elif time.time() >= (last_update_time + self.sleeptime[epg_method]):
+                    updatetheepg = True
+                if updatetheepg:
+                    self.fhdhr.api.get("%s&source=%s" % (self.epg_update_url, epg_method))
+            time.sleep(1800)
+
+        self.stop()
